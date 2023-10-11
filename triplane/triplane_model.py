@@ -53,6 +53,8 @@ class TriplaneModelConfig(ModelConfig):
     """initial render resolution"""
     final_resolution: int = 300
     """final render resolution"""
+    use_progressive_upsampling = False
+    """whether progressive upsampling should be enabled or the final resolution is used"""
     upsampling_iters: Tuple[int, ...] = (2000, 3000, 4000, 5500, 7000)
     """specifies a list of iteration step numbers to perform upsampling"""
     loss_coefficients: Dict[str, float] = to_immutable_dict(
@@ -95,6 +97,8 @@ class TriplaneModel(Model):
         **kwargs,
     ) -> None:
         self.init_resolution = config.init_resolution
+        if not config.use_progressive_upsampling:
+            self.init_resolution = config.final_resolution
         self.upsampling_iters = config.upsampling_iters
         self.num_den_components = config.num_den_components
         self.num_color_components = config.num_color_components
@@ -112,6 +116,7 @@ class TriplaneModel(Model):
             .astype("int")
             .tolist()[1:]
         )
+        self.use_progressive_upsampling = config.use_progressive_upsampling
         super().__init__(config=config, **kwargs)
 
     def get_training_callbacks(self, training_callback_attributes: TrainingCallbackAttributes) -> List[TrainingCallback]:
@@ -142,15 +147,16 @@ class TriplaneModel(Model):
                         optimizer=training_callback_attributes.optimizers.optimizers["encodings"], lr_init=lr_init
                     )
                 )
-
-        callbacks = [
-            TrainingCallback(
-                where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
-                iters=self.upsampling_iters,
-                func=reinitialize_optimizer,
-                args=[self, training_callback_attributes],
+        callbacks = []
+        if self.use_progressive_upsampling:
+            callbacks.append(
+                TrainingCallback(
+                    where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
+                    iters=self.upsampling_iters,
+                    func=reinitialize_optimizer,
+                    args=[self, training_callback_attributes],
+                )
             )
-        ]
 
         return callbacks
 
@@ -179,6 +185,7 @@ class TriplaneModel(Model):
             appearance_dim=self.appearance_dim,
             head_mlp_num_layers=2,
             head_mlp_layer_width=128,
+            scene_scale=15.0
         )
 
         # samplers
@@ -266,12 +273,12 @@ class TriplaneModel(Model):
 
         if self.config.regularization == "l1":
             l1_parameters = []
-            for parameter in self.field_density_encoding.parameters():
+            for parameter in self.field.density_encoding.parameters():
                 l1_parameters.append(parameter.view(-1))
             loss_dict["l1_reg"] = torch.abs(torch.cat(l1_parameters)).mean()
         elif self.config.regularization == "tv":
-            density_plane_coef = self.field.density_encoding.plane_coef
-            color_plane_coef = self.field.color_encoding.plane_coef
+            density_plane_coef = self.field.density_encoding.mip_maps
+            color_plane_coef = self.field.color_encoding.mip_maps
             assert isinstance(color_plane_coef, torch.Tensor) and isinstance(
                 density_plane_coef, torch.Tensor), "TV reg only supported for TensoRF encoding types with plane_coef attribute"
             loss_dict["tv_reg_density"] = tv_loss(density_plane_coef)

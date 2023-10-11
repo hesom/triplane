@@ -39,19 +39,23 @@ class TriplaneField(Field):
         # number of layers for the MLP 
         head_mlp_layer_width: int = 128,
         # layer width for the MLP
+        scene_scale: float = 1.0
     ) -> None:
         super().__init__()
         self.aabb = Parameter(aabb, requires_grad=False)
+        self.scene_scale = scene_scale
 
         # setting up fields
         self.density_encoding = TriplaneNeRFEncoding(
             resolution=init_resolution,
             num_components=num_den_components,
+            mip_levels=3,
             reduce="product",
         )
         self.color_encoding = TriplaneNeRFEncoding(
             resolution=init_resolution,
             num_components=num_color_components,
+            mip_levels=3,
             reduce="product"
         )
 
@@ -71,9 +75,13 @@ class TriplaneField(Field):
         self.field_output_rgb = RGBFieldHead(in_dim=self.mlp_head.get_out_dim(), activation=nn.Sigmoid())
         
     def get_density(self, ray_samples: RaySamples) -> Tensor:
-        positions = SceneBox.get_normalized_positions(ray_samples.frustums.get_positions(), self.aabb)
+        positions = ray_samples.frustums.get_positions()
+        sample_dist = torch.linalg.norm(positions - ray_samples.frustums.origins, dim=-1, keepdim=True)
+        mip_selector = sample_dist / self.scene_scale
+
+        positions = SceneBox.get_normalized_positions(positions, self.aabb)
         positions = positions * 2 - 1
-        density = self.density_encoding(positions)
+        density = self.density_encoding(torch.cat([positions, mip_selector], dim=-1))
         density_enc = torch.sum(density, dim=-1)[:, :, None]
         relu = nn.ReLU()
         density_enc = relu(density_enc)
@@ -81,9 +89,13 @@ class TriplaneField(Field):
 
     def get_outputs(self, ray_samples: RaySamples, density_embedding: Optional[Tensor] = None) -> Tensor:
         d = ray_samples.frustums.directions
-        positions = SceneBox.get_normalized_positions(ray_samples.frustums.get_positions(), self.aabb)
+        positions = ray_samples.frustums.get_positions()
+        sample_dist = torch.linalg.norm(positions - ray_samples.frustums.origins, dim=-1, keepdim=True)
+        mip_selector = sample_dist / self.scene_scale
+
+        positions = SceneBox.get_normalized_positions(positions, self.aabb)
         positions = positions * 2 - 1
-        rgb_features = self.color_encoding(positions)
+        rgb_features = self.color_encoding(torch.cat([positions, mip_selector], dim=-1))
         rgb_features = self.B(rgb_features)
 
         d_encoded = self.direction_encoding(d)
@@ -132,6 +144,7 @@ class TriplaneNeRFEncoding(Encoding):
         resolution: int = 32,
         num_components: int = 64,
         init_scale: float = 0.1,
+        mip_levels: int = 1,
         reduce: Literal["sum", "product"] = "product",
     ) -> None:
         super().__init__(in_dim=3)
@@ -140,31 +153,52 @@ class TriplaneNeRFEncoding(Encoding):
         self.num_components = num_components
         self.init_scale = init_scale
         self.reduce = reduce
+        self.mip_levels = mip_levels
 
-        self.plane_coef = nn.Parameter(
-            self.init_scale * torch.randn((3, self.num_components, self.resolution, self.resolution))
-        )
+        self.mip_maps = nn.ParameterList([
+            nn.Parameter(
+                self.init_scale * torch.randn((3, self.num_components, self.resolution // i, self.resolution // i))
+            )
+            for i in range(1, mip_levels + 1)
+            ])
 
     def get_out_dim(self) -> int:
         return self.num_components
 
-    def forward(self, in_tensor: Float[Tensor, "*bs 3"]) -> Float[Tensor, "*bs num_components featuresize"]:
+    def forward(self, in_tensor: Float[Tensor, "*bs 4"]) -> Float[Tensor, "*bs num_components featuresize"]:
         """Sample features from this encoder. Expects in_tensor to be in range [-1, 1]"""
 
         original_shape = in_tensor.shape
-        in_tensor = in_tensor.reshape(-1, 3)
+        in_tensor = in_tensor.reshape(-1, 4)
+        plane_coord = in_tensor[..., :3]
+        mip_selector = in_tensor[..., 3:]
+
+        level_masks = []
+        for i in range(1, self.mip_levels + 1):
+            cutoff_low = (i-1)*(1.0 / self.mip_levels)
+            cutoff_high = i * (1.0 / self.mip_levels)
+            if i == 1:
+                level_masks.append(mip_selector <= cutoff_high)
+            elif i == self.mip_levels:
+                level_masks.append(mip_selector > cutoff_low)
+            else:
+                level_masks.append(torch.logical_and(mip_selector <= cutoff_high, mip_selector > cutoff_low))
 
         plane_coord = torch.stack([in_tensor[..., [0,1]], in_tensor[..., [0,2]], in_tensor[..., [1,2]]], dim=0)
 
         plane_coord = plane_coord.detach().view(3, -1, 1, 2)
-        plane_features = F.grid_sample(
-            self.plane_coef, plane_coord, align_corners=True
-        )
 
-        if self.reduce == "product":
-            plane_features = plane_features.prod(0).squeeze(-1).T
+        if self.mip_levels == 1:
+            plane_features = F.grid_sample(self.mip_maps[0], plane_coord, align_corners=True)
         else:
-            plane_features = plane_features.sum(0).squeeze(-1).T
+            plane_features = level_masks[-1].int() * F.grid_sample(self.mip_maps[0], plane_coord, align_corners=True)
+            for i, plane_coeff in enumerate(self.mip_maps[1:]):
+                plane_features += level_masks[-(i+1)].int() * F.grid_sample(plane_coeff, plane_coord, align_corners=True)
+
+            if self.reduce == "product":
+                plane_features = plane_features.prod(0).squeeze(-1).T
+            else:
+                plane_features = plane_features.sum(0).squeeze(-1).T
 
         return plane_features.reshape(*original_shape[:-1], self.num_components)
 
