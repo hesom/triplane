@@ -1,4 +1,4 @@
-# nerfstudio-method-template
+# nerfstudio-triplane
 Template repository for creating and registering methods in Nerfstudio.
 
 ## Registering with Nerfstudio
