@@ -44,14 +44,8 @@ class TriplaneModelConfig(ModelConfig):
 
     _target: Type = field(default_factory=lambda: TriplaneModel)
     """target class to instantiate"""
-    init_resolution: int = 128
-    """initial render resolution"""
-    final_resolution: int = 200
+    triplane_resolution: int = 128
     """final render resolution"""
-    use_progressive_upsampling = False
-    """whether progressive upsampling should be enabled or the final resolution is used"""
-    upsampling_iters: Tuple[int, ...] = (2000, 3000, 4000, 5500, 7000)
-    """specifies a list of iteration step numbers to perform upsampling"""
     loss_coefficients: Dict[str, float] = to_immutable_dict(
         {
             "rgb_loss": 1.0,
@@ -96,71 +90,17 @@ class TriplaneModel(Model):
         config: TriplaneModelConfig,
         **kwargs,
     ) -> None:
-        self.init_resolution = config.init_resolution
-        self.final_resolution = config.final_resolution
-        if not config.use_progressive_upsampling:
-            self.init_resolution = config.final_resolution
-        self.upsampling_iters = config.upsampling_iters
+        self.triplane_resolution = config.triplane_resolution
         self.num_den_components = config.num_den_components
         self.num_color_components = config.num_color_components
         self.appearance_dim = config.appearance_dim
-        self.upsampling_steps = (
-            np.round(
-                np.exp(
-                    np.linspace(
-                        np.log(config.init_resolution),
-                        np.log(config.final_resolution),
-                        len(config.upsampling_iters) + 1,
-                    )
-                )
-            )
-            .astype("int")
-            .tolist()[1:]
-        )
-        self.use_progressive_upsampling = config.use_progressive_upsampling
         self.triplane_reduce = config.triplane_reduce
         self.mip_levels = config.mip_levels
         self.mip_method = config.mip_method
         super().__init__(config=config, **kwargs)
 
     def get_training_callbacks(self, training_callback_attributes: TrainingCallbackAttributes) -> List[TrainingCallback]:
-        # the callback that we want to run every X iterations after the training iteration
-        def reinitialize_optimizer(self, training_callback_attributes: TrainingCallbackAttributes, step: int):
-            assert training_callback_attributes.optimizers is not None
-            assert training_callback_attributes.pipeline is not None
-            index = self.upsampling_iters.index(step)
-            resolution = self.upsampling_steps[index]
-
-            # upsample the position and direction grids
-            self.field.density_encoding.upsample_grid(resolution)
-            self.field.color_encoding.upsample_grid(resolution)
-
-            # reinitialize the encodings optimizer
-            optimizers_config = training_callback_attributes.optimizers.config
-            enc = training_callback_attributes.pipeline.get_param_groups()["encodings"]
-            lr_init = optimizers_config["encodings"]["optimizer"].lr
-
-            training_callback_attributes.optimizers.optimizers["encodings"] = optimizers_config["encodings"][
-                "optimizer"
-            ].setup(params=enc)
-            if optimizers_config["encodings"]["scheduler"]:
-                training_callback_attributes.optimizers.schedulers["encodings"] = (
-                    optimizers_config["encodings"]["scheduler"]
-                    .setup()
-                    .get_scheduler(
-                        optimizer=training_callback_attributes.optimizers.optimizers["encodings"], lr_init=lr_init
-                    )
-                )
         callbacks = []
-        if self.use_progressive_upsampling:
-            callbacks.append(
-                TrainingCallback(
-                    where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
-                    iters=self.upsampling_iters,
-                    func=reinitialize_optimizer,
-                    args=[self, training_callback_attributes],
-                )
-            )
 
         return callbacks
 
@@ -182,13 +122,13 @@ class TriplaneModel(Model):
         super().populate_modules()
 
         texel_base_size = self.scene_box.get_diagonal_length().item() / math.sqrt(2)
-        texel_base_size /= self.final_resolution
+        texel_base_size /= self.triplane_resolution
 
         self.field = TriplaneField(
             self.scene_box.aabb,
             num_den_components=self.num_den_components,
             num_color_components=self.num_color_components,
-            init_resolution=self.init_resolution,
+            init_resolution=self.triplane_resolution,
             appearance_dim=self.appearance_dim,
             head_mlp_num_layers=2,
             head_mlp_layer_width=128,
