@@ -2,7 +2,7 @@
 Template repository for creating and registering methods in Nerfstudio.
 
 ## Registering with Nerfstudio
-Ensure that nerfstudio has been installed according to the [instructions](https://docs.nerf.studio/en/latest/quickstart/installation.html). Clone or fork this repository and run the commands:
+Ensure that nerfstudio has been installed according to the [instructions](https://docs.nerf.studio/quickstart/installation.html). Clone or fork this repository and run the commands:
 
 ```
 conda activate nerfstudio
