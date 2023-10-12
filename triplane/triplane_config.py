@@ -35,7 +35,7 @@ triplane = MethodSpecification(
                 train_num_rays_per_batch=4096,
                 eval_num_rays_per_batch=4096,
             ),
-            model=TriplaneModelConfig(regularization="l1",),
+            model=TriplaneModelConfig(regularization="none",),
         ),
         optimizers={
             "fields": {

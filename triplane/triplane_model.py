@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import reduce
 from typing import Dict, Union, List, Literal, Tuple, Type, cast
+import math
 
 import numpy as np
 import torch
@@ -31,7 +32,7 @@ from nerfstudio.field_components.encodings import (
     TriplaneEncoding,
 )
 from nerfstudio.field_components.field_heads import FieldHeadNames
-from triplane.triplane_field import TriplaneField, TriplaneNeRFEncoding
+from triplane.triplane_field import TriplaneField, TriplaneMipEncoding
 from nerfstudio.model_components.losses import MSELoss, tv_loss
 from nerfstudio.model_components.ray_samplers import PDFSampler, UniformSampler
 from nerfstudio.model_components.renderers import (
@@ -51,7 +52,7 @@ class TriplaneModelConfig(ModelConfig):
     """target class to instantiate"""
     init_resolution: int = 128
     """initial render resolution"""
-    final_resolution: int = 300
+    final_resolution: int = 200
     """final render resolution"""
     use_progressive_upsampling = False
     """whether progressive upsampling should be enabled or the final resolution is used"""
@@ -97,6 +98,7 @@ class TriplaneModel(Model):
         **kwargs,
     ) -> None:
         self.init_resolution = config.init_resolution
+        self.final_resolution = config.final_resolution
         if not config.use_progressive_upsampling:
             self.init_resolution = config.final_resolution
         self.upsampling_iters = config.upsampling_iters
@@ -177,6 +179,9 @@ class TriplaneModel(Model):
         """Set the fields and modules"""
         super().populate_modules()
 
+        texel_base_size = self.scene_box.get_diagonal_length().item() / math.sqrt(2)
+        texel_base_size /= self.final_resolution
+
         self.field = TriplaneField(
             self.scene_box.aabb,
             num_den_components=self.num_den_components,
@@ -185,7 +190,8 @@ class TriplaneModel(Model):
             appearance_dim=self.appearance_dim,
             head_mlp_num_layers=2,
             head_mlp_layer_width=128,
-            scene_scale=15.0
+            scene_scale=15.0,
+            texel_base_size=texel_base_size
         )
 
         # samplers

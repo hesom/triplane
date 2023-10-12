@@ -39,23 +39,29 @@ class TriplaneField(Field):
         # number of layers for the MLP 
         head_mlp_layer_width: int = 128,
         # layer width for the MLP
-        scene_scale: float = 1.0
+        scene_scale: float = 1.0,
+        # scale of scene including cameras
+        texel_base_size: float = 1.0
+        # base size of one texel of triplane in scene units
     ) -> None:
         super().__init__()
         self.aabb = Parameter(aabb, requires_grad=False)
         self.scene_scale = scene_scale
+        self.texel_base_size = texel_base_size
 
         # setting up fields
-        self.density_encoding = TriplaneNeRFEncoding(
+        self.density_encoding = TriplaneMipEncoding(
             resolution=init_resolution,
             num_components=num_den_components,
             mip_levels=3,
+            mip_method="laplace",
             reduce="product",
         )
-        self.color_encoding = TriplaneNeRFEncoding(
+        self.color_encoding = TriplaneMipEncoding(
             resolution=init_resolution,
             num_components=num_color_components,
             mip_levels=3,
+            mip_method="laplace",
             reduce="product"
         )
 
@@ -77,7 +83,8 @@ class TriplaneField(Field):
     def get_density(self, ray_samples: RaySamples) -> Tensor:
         positions = ray_samples.frustums.get_positions()
         sample_dist = torch.linalg.norm(positions - ray_samples.frustums.origins, dim=-1, keepdim=True)
-        mip_selector = sample_dist / self.scene_scale
+        pixel_size_proj = torch.sqrt(ray_samples.frustums.pixel_area) * sample_dist
+        mip_selector = (self.texel_base_size / pixel_size_proj) / 10.
 
         positions = SceneBox.get_normalized_positions(positions, self.aabb)
         positions = positions * 2 - 1
@@ -91,7 +98,8 @@ class TriplaneField(Field):
         d = ray_samples.frustums.directions
         positions = ray_samples.frustums.get_positions()
         sample_dist = torch.linalg.norm(positions - ray_samples.frustums.origins, dim=-1, keepdim=True)
-        mip_selector = sample_dist / self.scene_scale
+        pixel_size_proj = torch.sqrt(ray_samples.frustums.pixel_area) * sample_dist
+        mip_selector = (self.texel_base_size / pixel_size_proj) / 10.
 
         positions = SceneBox.get_normalized_positions(positions, self.aabb)
         positions = positions * 2 - 1
@@ -136,7 +144,7 @@ class TriplaneField(Field):
         
         return {FieldHeadNames.DENSITY: density, FieldHeadNames.RGB: rgb}
 
-class TriplaneNeRFEncoding(Encoding):
+class TriplaneMipEncoding(Encoding):
     plane_coef: Float[Tensor, "3 num_components resolution resolution"]
 
     def __init__(
@@ -146,6 +154,7 @@ class TriplaneNeRFEncoding(Encoding):
         init_scale: float = 0.1,
         mip_levels: int = 1,
         reduce: Literal["sum", "product"] = "product",
+        mip_method: Literal["mip", "laplace"] = "mip",
     ) -> None:
         super().__init__(in_dim=3)
 
@@ -154,13 +163,27 @@ class TriplaneNeRFEncoding(Encoding):
         self.init_scale = init_scale
         self.reduce = reduce
         self.mip_levels = mip_levels
-
-        self.mip_maps = nn.ParameterList([
-            nn.Parameter(
-                self.init_scale * torch.randn((3, self.num_components, self.resolution // i, self.resolution // i))
+        self.mip_method = mip_method
+        
+        if mip_method == "laplace":
+            self.mip_maps = nn.ParameterList([
+                nn.Parameter(
+                    torch.zeros((3, self.num_components, self.resolution // (2**i), self.resolution // (2**i)))
+                )
+                for i in range(mip_levels - 1)
+                ])
+            self.mip_maps.append(
+                nn.Parameter(
+                    self.init_scale * torch.randn((3, self.num_components, self.resolution // (2**(mip_levels-1)), self.resolution // (2**(mip_levels-1))))
+                )
             )
-            for i in range(1, mip_levels + 1)
-            ])
+        else:
+            self.mip_maps = nn.ParameterList([
+                nn.Parameter(
+                    self.init_scale * torch.randn((3, self.num_components, self.resolution // (2**i), self.resolution // (2**i)))
+                )
+                for i in range(mip_levels)
+                ])
 
     def get_out_dim(self) -> int:
         return self.num_components
@@ -174,15 +197,25 @@ class TriplaneNeRFEncoding(Encoding):
         mip_selector = in_tensor[..., 3:]
 
         level_masks = []
-        for i in range(1, self.mip_levels + 1):
-            cutoff_low = (i-1)*(1.0 / self.mip_levels)
-            cutoff_high = i * (1.0 / self.mip_levels)
-            if i == 1:
-                level_masks.append(mip_selector <= cutoff_high)
-            elif i == self.mip_levels:
-                level_masks.append(mip_selector > cutoff_low)
-            else:
-                level_masks.append(torch.logical_and(mip_selector <= cutoff_high, mip_selector > cutoff_low))
+        if self.mip_levels > 1:
+            for i in range(0, self.mip_levels):
+                cutoff_low = (1.0 / (2**(i+1)))
+                cutoff_high = (1.0 / (2**i))
+                if i == 0:
+                    level_masks.append(cutoff_low < mip_selector)
+                elif i == self.mip_levels - 1:
+                    level_masks.append(mip_selector <= cutoff_high)
+                else:
+                    level_masks.append(torch.logical_and(mip_selector <= cutoff_high, cutoff_low < mip_selector))
+
+        # if laplace mip mapping is used, we need to set the level masks of lower levels to true if higher levels are true
+        if self.mip_method == "laplace":
+            for i in range(1, self.mip_levels):
+                level_masks[i] = torch.logical_or(level_masks[i], level_masks[i-1])
+                    
+        # print(mip_selector.min(), mip_selector.max())
+        # for i, mask in enumerate(level_masks):
+        #     print(i, torch.any(mask))
 
         plane_coord = torch.stack([in_tensor[..., [0,1]], in_tensor[..., [0,2]], in_tensor[..., [1,2]]], dim=0)
 
@@ -191,14 +224,17 @@ class TriplaneNeRFEncoding(Encoding):
         if self.mip_levels == 1:
             plane_features = F.grid_sample(self.mip_maps[0], plane_coord, align_corners=True)
         else:
-            plane_features = level_masks[-1].int() * F.grid_sample(self.mip_maps[0], plane_coord, align_corners=True)
+            plane_features = F.grid_sample(self.mip_maps[0], plane_coord, align_corners=True)
+            plane_features = level_masks[0].expand_as(plane_features).float() * plane_features
             for i, plane_coeff in enumerate(self.mip_maps[1:]):
-                plane_features += level_masks[-(i+1)].int() * F.grid_sample(plane_coeff, plane_coord, align_corners=True)
+                level_features = level_masks[i+1].expand_as(plane_features).float() * F.grid_sample(plane_coeff, plane_coord, align_corners=True)
+                # print(i, abs(level_features).min(), abs(level_features).max())
+                plane_features += level_features
 
-            if self.reduce == "product":
-                plane_features = plane_features.prod(0).squeeze(-1).T
-            else:
-                plane_features = plane_features.sum(0).squeeze(-1).T
+        if self.reduce == "product":
+            plane_features = plane_features.prod(0).squeeze(-1).T
+        else:
+            plane_features = plane_features.sum(0).squeeze(-1).T
 
         return plane_features.reshape(*original_shape[:-1], self.num_components)
 
@@ -210,3 +246,4 @@ class TriplaneNeRFEncoding(Encoding):
 
         self.plane_coef = torch.nn.Parameter(plane_coef)
         self.resolution = resolution
+
