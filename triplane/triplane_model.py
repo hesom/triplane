@@ -105,17 +105,7 @@ class TriplaneModel(Model):
         return callbacks
 
     def update_to_step(self, step: int) -> None:
-        if step < self.upsampling_iters[0]:
-            return
-
-        new_iters = list(self.upsampling_iters) + [step + 1]
-        new_iters.sort()
-
-        index = new_iters.index(step + 1)
-        new_grid_resolution = self.upsampling_steps[index - 1]
-
-        self.field.density_encoding.upsample_grid(new_grid_resolution)
-        self.field.color_encoding.upsample_grid(new_grid_resolution)
+        return
 
     def populate_modules(self):
         """Set the fields and modules"""
@@ -252,7 +242,7 @@ class TriplaneModel(Model):
             outputs["depth"],
             accumulation=outputs["accumulation"],
             near_plane=self.config.collider_params["near_plane"],
-            far_plane=self.conig.collider_params["far_plane"],
+            far_plane=self.config.collider_params["far_plane"],
         )
 
         combined_rgb = torch.cat([image, rgb], dim=1)
