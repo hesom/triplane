@@ -14,8 +14,8 @@ from triplane.triplane_pipeline import (
     TriplanePipelineConfig,
 )
 from nerfstudio.configs.base_config import ViewerConfig
-from nerfstudio.data.dataparsers.nerfstudio_dataparser import NerfstudioDataParserConfig
-from nerfstudio.engine.optimizers import AdamOptimizerConfig, RAdamOptimizerConfig
+from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
+from nerfstudio.engine.optimizers import AdamOptimizerConfig
 from nerfstudio.engine.schedulers import (
     ExponentialDecaySchedulerConfig,
 )
@@ -24,14 +24,14 @@ from nerfstudio.plugins.types import MethodSpecification
 
 triplane = MethodSpecification(
     config=TrainerConfig(
-        method_name="triplane",  # TODO: rename to your own model
+        method_name="triplane",
         steps_per_eval_batch=500,
         steps_per_save=2000,
         max_num_iterations=30000,
         mixed_precision=False,
         pipeline=TriplanePipelineConfig(
             datamanager=TriplaneDataManagerConfig(
-                dataparser=NerfstudioDataParserConfig(),
+                dataparser=BlenderDataParserConfig(),
                 train_num_rays_per_batch=4096,
                 eval_num_rays_per_batch=4096,
             ),

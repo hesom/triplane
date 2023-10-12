@@ -25,14 +25,8 @@ from nerfstudio.engine.callbacks import (
     TrainingCallbackAttributes,
     TrainingCallbackLocation
 )
-from nerfstudio.field_components.encodings import (
-    NeRFEncoding,
-    TensorCPEncoding,
-    TensorVMEncoding,
-    TriplaneEncoding,
-)
 from nerfstudio.field_components.field_heads import FieldHeadNames
-from triplane.triplane_field import TriplaneField, TriplaneMipEncoding
+from triplane.triplane_field import TriplaneField
 from nerfstudio.model_components.losses import MSELoss, tv_loss
 from nerfstudio.model_components.ray_samplers import PDFSampler, UniformSampler
 from nerfstudio.model_components.renderers import (
@@ -81,7 +75,12 @@ class TriplaneModelConfig(ModelConfig):
     """Regularization method used in tensorf paper"""
     background_color: Literal["random", "last_sample", "black", "white"] = "white"
     """Whether to randomize the background color"""
-
+    mip_levels: int = 3
+    """Number of triplane mip levels"""
+    mip_method: Literal["mip", "laplace"] = "mip"
+    """Mip method"""
+    triplane_reduce: Literal["sum", "product"] = "product"
+    """Triplane reduction method"""
 
 class TriplaneModel(Model):
     """Triplane Model
@@ -119,6 +118,9 @@ class TriplaneModel(Model):
             .tolist()[1:]
         )
         self.use_progressive_upsampling = config.use_progressive_upsampling
+        self.triplane_reduce = config.triplane_reduce
+        self.mip_levels = config.mip_levels
+        self.mip_method = config.mip_method
         super().__init__(config=config, **kwargs)
 
     def get_training_callbacks(self, training_callback_attributes: TrainingCallbackAttributes) -> List[TrainingCallback]:
@@ -191,7 +193,10 @@ class TriplaneModel(Model):
             head_mlp_num_layers=2,
             head_mlp_layer_width=128,
             scene_scale=15.0,
-            texel_base_size=texel_base_size
+            texel_base_size=texel_base_size,
+            mip_method=self.mip_method, # type: ignore
+            mip_levels=self.mip_levels,
+            triplane_reduce=self.triplane_reduce # type: ignore
         )
 
         # samplers

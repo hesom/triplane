@@ -41,28 +41,35 @@ class TriplaneField(Field):
         # layer width for the MLP
         scene_scale: float = 1.0,
         # scale of scene including cameras
-        texel_base_size: float = 1.0
+        texel_base_size: float = 1.0,
         # base size of one texel of triplane in scene units
+        mip_levels: int = 3,
+        # number of mip map levels
+        mip_method: Literal["mip", "laplace"] = "mip",
+        triplane_reduce: Literal["sum", "product"] = "product",
     ) -> None:
         super().__init__()
         self.aabb = Parameter(aabb, requires_grad=False)
         self.scene_scale = scene_scale
         self.texel_base_size = texel_base_size
+        self.mip_levels = mip_levels
+        self.mip_method = mip_method
+        self.triplane_reduce = triplane_reduce
 
         # setting up fields
         self.density_encoding = TriplaneMipEncoding(
             resolution=init_resolution,
             num_components=num_den_components,
-            mip_levels=3,
-            mip_method="laplace",
-            reduce="product",
+            mip_levels=self.mip_levels,
+            mip_method=self.mip_method,
+            reduce=self.triplane_reduce,
         )
         self.color_encoding = TriplaneMipEncoding(
             resolution=init_resolution,
             num_components=num_color_components,
-            mip_levels=3,
-            mip_method="laplace",
-            reduce="product"
+            mip_levels=self.mip_levels,
+            mip_method=self.mip_method,
+            reduce=self.triplane_reduce
         )
 
         self.feature_encoding = NeRFEncoding(in_dim=appearance_dim, num_frequencies=2, min_freq_exp=0, max_freq_exp=2)
