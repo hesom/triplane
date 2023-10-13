@@ -14,5 +14,5 @@ ns-install-cli
 ## Running the new method
 This repository creates a new Nerfstudio method named "triplane". To train with it, run the command:
 ```
-ns-train triplane --pipeline.model.mip-levels 3 --pipeline.model.mip-method laplace --data [PATH TO BLENDER DATA]
+ns-train triplane --pipeline.model.mip-levels 5 --pipeline.model.mip-method laplace --data [PATH TO BLENDER DATA]
 ```
