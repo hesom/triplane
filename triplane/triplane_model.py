@@ -150,7 +150,7 @@ class TriplaneModel(Model):
         self.renderer_depth = DepthRenderer()
 
         # losses
-        self.rgb_loss = MSELoss()
+        self.rgb_loss = MSELoss(reduction="mean")
 
         # metrics
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
@@ -216,13 +216,14 @@ class TriplaneModel(Model):
         # Scaling metrics by coefficients to create the losses
         device = outputs["rgb"].device
         image = batch["image"][..., :3].to(device)
+        lossmult = batch["lossmult"].to(device)
         pred_image, image = self.renderer_rgb.blend_background_for_loss_computation(
             pred_image=outputs["rgb"],
             pred_accumulation=outputs["accumulation"],
             gt_image=image
         )
 
-        rgb_loss = self.rgb_loss(image, pred_image)
+        rgb_loss = torch.mean(lossmult * self.rgb_loss(image, pred_image))
 
         loss_dict = {"rgb_loss": rgb_loss}
 

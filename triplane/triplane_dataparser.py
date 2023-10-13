@@ -98,6 +98,7 @@ class MipBlender(DataParser):
 
         for lm in meta["lossmult"]:
             lossmult.append(float(lm))
+        # lossmult = torch.tensor(lossmult, dtype=torch.float32)
 
         poses = torch.from_numpy(np.array(poses).astype(np.float32)[:, :3])
         fx = torch.tensor(fx, dtype=torch.float32)
