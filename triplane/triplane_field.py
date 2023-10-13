@@ -91,7 +91,7 @@ class TriplaneField(Field):
         positions = ray_samples.frustums.get_positions()
         sample_dist = torch.linalg.norm(positions - ray_samples.frustums.origins, dim=-1, keepdim=True)
         pixel_size_proj = torch.sqrt(ray_samples.frustums.pixel_area) * sample_dist
-        mip_selector = (self.texel_base_size / pixel_size_proj) / 10.
+        mip_selector = (self.texel_base_size / pixel_size_proj)
 
         positions = SceneBox.get_normalized_positions(positions, self.aabb)
         positions = positions * 2 - 1
@@ -106,7 +106,7 @@ class TriplaneField(Field):
         positions = ray_samples.frustums.get_positions()
         sample_dist = torch.linalg.norm(positions - ray_samples.frustums.origins, dim=-1, keepdim=True)
         pixel_size_proj = torch.sqrt(ray_samples.frustums.pixel_area) * sample_dist
-        mip_selector = (self.texel_base_size / pixel_size_proj) / 10.
+        mip_selector = (self.texel_base_size / pixel_size_proj)
 
         positions = SceneBox.get_normalized_positions(positions, self.aabb)
         positions = positions * 2 - 1
@@ -120,6 +120,14 @@ class TriplaneField(Field):
         rgb = self.field_output_rgb(out)
 
         return rgb
+
+    def get_mip_selector(self, ray_samples: RaySamples) -> Tensor:
+        positions = ray_samples.frustums.get_positions()
+        sample_dist = torch.linalg.norm(positions - ray_samples.frustums.origins, dim=-1, keepdim=True)
+        pixel_size_proj = torch.sqrt(ray_samples.frustums.pixel_area) * sample_dist
+        mip_selector = (self.texel_base_size / pixel_size_proj)
+
+        return mip_selector
 
     def forward(
         self,

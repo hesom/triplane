@@ -2,6 +2,17 @@
 Triplane Model File
 
 Currently this subclasses the Nerfacto model. Consider subclassing from the base Model.
+        if step < self.upsampling_iters[0]:
+            return
+
+        new_iters = list(self.upsampling_iters) + [step + 1]
+        new_iters.sort()
+
+        index = new_iters.index(step + 1)
+        new_grid_resolution = self.upsampling_steps[index - 1]
+
+        self.field.density_encoding.upsample_grid(new_grid_resolution)
+        self.field.color_encoding.upsample_grid(new_grid_resolution)
 """
 
 from __future__ import annotations
@@ -182,6 +193,9 @@ class TriplaneModel(Model):
             ray_samples_pdf, mask=acc_mask, bg_color=colors.WHITE.to(weights.device)
         )
 
+        mip_selector = self.field.get_mip_selector(ray_samples_uniform)
+        mip_selector = torch.median(mip_selector, dim=1)[0]
+
         weights_fine = ray_samples_pdf.get_weights(field_outputs_fine[FieldHeadNames.DENSITY])
         
         accumulation = self.renderer_accumulation(weights_fine)
@@ -195,7 +209,7 @@ class TriplaneModel(Model):
         rgb = torch.where(accumulation < 0, colors.WHITE.to(rgb.device), rgb)
         accumulation = torch.clamp(accumulation, min=0)
 
-        outputs = {"rgb": rgb, "accumulation": accumulation, "depth": depth}
+        outputs = {"rgb": rgb, "accumulation": accumulation, "depth": depth, "mip": mip_selector}
         return outputs
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
