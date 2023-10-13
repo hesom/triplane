@@ -45,7 +45,7 @@ class TriplaneField(Field):
         # base size of one texel of triplane in scene units
         mip_levels: int = 3,
         # number of mip map levels
-        mip_method: Literal["mip", "laplace"] = "mip",
+        mip_method: Literal["mip", "laplace", "explicit"] = "mip",
         triplane_reduce: Literal["sum", "product"] = "product",
     ) -> None:
         super().__init__()
@@ -169,7 +169,7 @@ class TriplaneMipEncoding(Encoding):
         init_scale: float = 0.1,
         mip_levels: int = 1,
         reduce: Literal["sum", "product"] = "product",
-        mip_method: Literal["mip", "laplace"] = "mip",
+        mip_method: Literal["mip", "laplace", "explicit"] = "mip",
     ) -> None:
         super().__init__(in_dim=3)
 
@@ -192,6 +192,12 @@ class TriplaneMipEncoding(Encoding):
                     self.init_scale * torch.randn((3, self.num_components, self.resolution // (2**(mip_levels-1)), self.resolution // (2**(mip_levels-1))))
                 )
             )
+        elif mip_method == "explicit":
+            self.mip_maps = nn.ParameterList([
+                nn.Parameter(
+                    self.init_scale * torch.randn((3, self.num_components, self.resolution, self.resolution))
+                )
+            ])
         else:
             self.mip_maps = nn.ParameterList([
                 nn.Parameter(
@@ -241,10 +247,17 @@ class TriplaneMipEncoding(Encoding):
         else:
             plane_features = F.grid_sample(self.mip_maps[0], plane_coord, align_corners=True)
             plane_features = level_masks[0].expand_as(plane_features).float() * plane_features
-            for i, plane_coeff in enumerate(self.mip_maps[1:]):
-                level_features = level_masks[i+1].expand_as(plane_features).float() * F.grid_sample(plane_coeff, plane_coord, align_corners=True)
-                # print(i, abs(level_features).min(), abs(level_features).max())
-                plane_features += level_features
+            if self.mip_method == "explicit":
+                for i in range(1, self.mip_levels):
+                    scale_factor = 1.0 / (2**i)
+                    resampled_mip = F.interpolate(self.mip_maps[0], scale_factor=scale_factor, align_corners=True, antialias=True, mode="bilinear")
+                    level_features = level_masks[i].expand_as(plane_features).float() * F.grid_sample(resampled_mip, plane_coord, align_corners=True)
+                    plane_features += level_features
+            else:
+                for i, plane_coeff in enumerate(self.mip_maps[1:]):
+                    level_features = level_masks[i+1].expand_as(plane_features).float() * F.grid_sample(plane_coeff, plane_coord, align_corners=True)
+                    # print(i, abs(level_features).min(), abs(level_features).max())
+                    plane_features += level_features
 
         if self.reduce == "product":
             plane_features = plane_features.prod(0).squeeze(-1).T

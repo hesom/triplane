@@ -82,7 +82,7 @@ class TriplaneModelConfig(ModelConfig):
     """Whether to randomize the background color"""
     mip_levels: int = 3
     """Number of triplane mip levels"""
-    mip_method: Literal["mip", "laplace"] = "mip"
+    mip_method: Literal["mip", "laplace", "explicit"] = "mip"
     """Mip method"""
     triplane_reduce: Literal["sum", "product"] = "product"
     """Triplane reduction method"""
