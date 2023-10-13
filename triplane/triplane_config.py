@@ -6,6 +6,14 @@ Define your custom method here that registers with Nerfstudio CLI.
 
 from __future__ import annotations
 
+from nerfstudio.configs.base_config import ViewerConfig
+from nerfstudio.engine.optimizers import AdamOptimizerConfig
+from nerfstudio.engine.schedulers import (
+    ExponentialDecaySchedulerConfig,
+)
+from nerfstudio.engine.trainer import TrainerConfig
+from nerfstudio.plugins.types import MethodSpecification
+
 from triplane.triplane_datamanager import (
     TriplaneDataManagerConfig,
 )
@@ -13,14 +21,7 @@ from triplane.triplane_model import TriplaneModelConfig
 from triplane.triplane_pipeline import (
     TriplanePipelineConfig,
 )
-from nerfstudio.configs.base_config import ViewerConfig
-from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
-from nerfstudio.engine.optimizers import AdamOptimizerConfig
-from nerfstudio.engine.schedulers import (
-    ExponentialDecaySchedulerConfig,
-)
-from nerfstudio.engine.trainer import TrainerConfig
-from nerfstudio.plugins.types import MethodSpecification
+from triplane.triplane_dataparser import MipBlenderDataParserConfig 
 
 triplane = MethodSpecification(
     config=TrainerConfig(
@@ -32,7 +33,7 @@ triplane = MethodSpecification(
         mixed_precision=False,
         pipeline=TriplanePipelineConfig(
             datamanager=TriplaneDataManagerConfig(
-                dataparser=BlenderDataParserConfig(),
+                dataparser=MipBlenderDataParserConfig(),
                 train_num_rays_per_batch=4096,
                 eval_num_rays_per_batch=4096,
             ),
